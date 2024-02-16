@@ -1,5 +1,5 @@
 from .core.config import SolverParameters
-from .core.track_generator import create_interpolator
+from .interpolate.track_interpolator import create_interpolator
 from .core.workspace import Workspace
 from .core.particle_id import load_particle_id, ParticleID
 from .core.cluster import Cluster
@@ -93,6 +93,7 @@ def phase_solve(
             pl.struct(["dEdx", "brho"]).map_batches(pid.cut.is_cols_inside)
             & (pl.col("ic_amplitude") > solver_params.ic_min_val)
             & (pl.col("ic_amplitude") < solver_params.ic_max_val)
+            # & (pl.col("ic_multiplicity") < 2.0)  # For legacy data
         )
         .sort("polar", descending=True)
         .unique("event", keep="first")
