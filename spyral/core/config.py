@@ -144,6 +144,9 @@ class FribParameters:
         The maximum peak width parameter used in scipy.signal.find_peaks
     peak_threshold: float
         The minimum amplitude of a valid peak
+    ic_delay_time_bucket: int
+        The delay to the IC signal in FRIB TimeBuckets. All IC peaks
+        before this TB are ignored when considering IC multiplicity/validity
     ic_multiplicity: int
         The maximum allowed ion chamber multiplicity
     correct_ic_time: bool
@@ -155,6 +158,7 @@ class FribParameters:
     peak_prominence: float = 20.0
     peak_max_width: float = 100.0
     peak_threshold: float = 25.0
+    ic_delay_time_bucket: int = 1100
     ic_multiplicity: int = 1
     correct_ic_time: bool = True
 
@@ -167,13 +171,8 @@ class ClusterParameters:
     ----------
     min_cloud_size: int
         The minimum size for a point cloud to be clustered
-    smoothing_neighbor_distance: float
-        Size of neighborhood radius in mm for smoothing
     min_points: int
         min_samples parameter in scikit-learns' HDBSCAN algorithm
-    big_event_cutoff: int
-        the cutoff between big events and small events in units of points in the
-        point cloud
     min_size_scale_factor: int
         Factor which is multiplied by the number of points in a point cloud to set
         the min_cluster_size parameter in scikit-learn's HDBSCAN algorithm
@@ -194,7 +193,6 @@ class ClusterParameters:
     """
 
     min_cloud_size: int = 0
-    smoothing_neighbor_distance: float = 0.0  # mm
     min_points: int = 0
     min_size_scale_factor: float = 0.0
     min_size_lower_cutoff: int = 0
@@ -363,14 +361,12 @@ def deserialize_config(json_data: dict[Any, Any]) -> Config:
     config.frib.peak_prominence = frib_params["peak_prominence"]
     config.frib.peak_max_width = frib_params["peak_max_width"]
     config.frib.peak_threshold = frib_params["peak_threshold"]
+    config.frib.ic_delay_time_bucket = frib_params["ic_delay_time_bucket"]
     config.frib.ic_multiplicity = frib_params["event_ic_multiplicity"]
     config.frib.correct_ic_time = frib_params["event_correct_ic_time"]
 
     cluster_params = json_data["Cluster"]
     config.cluster.min_cloud_size = cluster_params["min_cloud_size"]
-    config.cluster.smoothing_neighbor_distance = cluster_params[
-        "smoothing_neighbor_distance(mm)"
-    ]
     config.cluster.min_size_scale_factor = cluster_params["minimum_size_scale_factor"]
     config.cluster.min_size_lower_cutoff = cluster_params["minimum_size_lower_cutoff"]
     config.cluster.min_points = cluster_params["minimum_points"]

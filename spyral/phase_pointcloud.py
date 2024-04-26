@@ -4,6 +4,7 @@ from .core.point_cloud import PointCloud
 from .core.workspace import Workspace
 from .trace.frib_event import FribEvent
 from .trace.get_event import GetEvent
+from .trace.frib_scalers import process_scalers
 from .correction import create_electron_corrector, ElectronCorrector
 from .parallel.status_message import StatusMessage, Phase
 from .core.spy_log import spyral_info, spyral_error, spyral_warn
@@ -40,6 +41,7 @@ def phase_pointcloud(
     get_params: GetParameters,
     frib_params: FribParameters,
     detector_params: DetectorParameters,
+    rng: np.random.Generator,
     queue: SimpleQueue,
 ):
     """The core loop of the pointcloud phase
@@ -62,6 +64,8 @@ def phase_pointcloud(
         Configuration parameters for FRIBDAQ data signal analysis (ion chamber, silicon, etc.)
     detector_params: DetectorParameters
         Configuration parameters for physical detector properties
+    rng: numpy.random.Generator
+        A random number generator for use in the signal analysis
     queue: SimpleQueue
         Communication channel back to the parent process
     """
@@ -110,20 +114,37 @@ def phase_pointcloud(
         )
         return
 
+    frib_scaler_group: h5.Group | None = frib_group["scaler"]  # type: ignore
+    if not isinstance(frib_group, h5.Group):
+        spyral_warn(
+            __name__,
+            f"FRIB scaler data group does not exist in run {run}. Spyral will continue, but scalers will not exist.",
+        )
+        frib_scaler_group = None
     cloud_group = point_file.create_group("cloud")
     cloud_group.attrs["min_event"] = min_event
     cloud_group.attrs["max_event"] = max_event
 
-    flush_percent = 0.01
-    flush_val = int(flush_percent * (max_event - min_event))
+    nevents = max_event - min_event
+    total: int
+    flush_val: int
+    if nevents < 1000:
+        total = nevents
+        flush_val = 0
+    else:
+        flush_percent = 0.01
+        flush_val = int(flush_percent * (max_event - min_event))
+        total = 100
+
     count = 0
+    msg = StatusMessage(run, Phase.CLOUD, total, 1)  # We always increment by 1
 
     # Process the data
     for idx in range(min_event, max_event + 1):
+        count += 1
         if count > flush_val:
             count = 0
-            queue.put(StatusMessage(run, Phase.CLOUD, 1))
-        count += 1
+            queue.put(msg)
 
         event_data: h5.Dataset
         try:
@@ -131,7 +152,7 @@ def phase_pointcloud(
         except Exception:
             continue
 
-        event = GetEvent(event_data, idx, get_params)
+        event = GetEvent(event_data, idx, get_params, rng)
 
         pc = PointCloud()
         pc.load_cloud_from_get_event(event, pad_map)
@@ -184,7 +205,9 @@ def phase_pointcloud(
             pc_dataset.attrs["ic_centroid"] = peak.centroid
             pc_dataset.attrs["ic_multiplicity"] = mult
 
-            ic_cor = frib_event.correct_ic_time(peak, detector_params.get_frequency)
+            ic_cor = frib_event.correct_ic_time(
+                peak, frib_params, detector_params.get_frequency
+            )
             # Apply IC correction to time calibration, if correction is less than the
             # total length of the GET window in TB
             if ic_cor < 512.0:
@@ -210,16 +233,21 @@ def phase_pointcloud(
                 detector_params.detector_length,
                 corrector,
             )
-            # Extract Raw IC, no Si conicidence imposed
-            ic_raw_mult = frib_event.get_ic_trace().get_number_of_peaks()
-            ic_peak = frib_event.get_ic_trace().get_peaks()[0]
-            # Check multiplicity condition
-            if ic_raw_mult < frib_params.ic_multiplicity:
+            # Get triggering IC, no Si conicidence imposed
+            ic_mult = frib_event.get_ic_multiplicity(frib_params)
+            ic_peak = frib_event.get_triggering_ic_peak(frib_params)
+            # Check multiplicity condition and existence of trigger
+            if ic_mult <= frib_params.ic_multiplicity and ic_peak is not None:
                 pc_dataset.attrs["ic_amplitude"] = ic_peak.amplitude
                 pc_dataset.attrs["ic_integral"] = ic_peak.integral
                 pc_dataset.attrs["ic_centroid"] = ic_peak.centroid
-                pc_dataset.attrs["ic_multiplicity"] = ic_raw_mult
+                pc_dataset.attrs["ic_multiplicity"] = ic_mult
 
         pc_dataset[:] = pc.cloud
+    # End of event data
+
+    # Process scaler data if it exists
+    if frib_scaler_group is not None:
+        process_scalers(frib_scaler_group, ws.get_scaler_file_path(run))
 
     spyral_info(__name__, "Phase 1 complete")

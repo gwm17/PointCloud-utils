@@ -39,21 +39,21 @@ $$
 
 We introduce an aditional scaling parameter $a$ so that $\hat{g}(\xi) = \text{sinc}(\xi/a)$ and the size of the baseline window can be controlled. This means that all we need to do is take the Fourier transform of our trace, multiply it by our $\hat{g}$, and then take the inverse fourier transform of that! We can even do this in one shot for the GET traces, correcting all of the baselines at once using the 2-D Fourier transform algorithms of Numpy.
 
-There are some small details that can be interesting.Before taking the Fourier transform of the trace, we need to remove singals from the trace, otherwise they will upset the baseline, moving the average up. This is done removing any time-buckets which have a value $\ge 1.5 \sigma$ away from the mean amplitude of the trace where $\sigma$ is the standard deviation of the trace amplitude.
+There are some small details that can be interesting. Before taking the Fourier transform of the trace, we need to remove singals from the trace, otherwise they will upset the baseline, moving the average up. This is done removing any time-buckets which have a value $\ge 1.5 \sigma$ away from the mean amplitude of the trace where $\sigma$ is the standard deviation of the trace amplitude.
 
 This code is entirely contained in `spyral/trace/get_event.py` in the `preprocess_traces` function.
 
 ## Identifying Signal Peaks
 
-Identifying peaks in spectra (traces) can be a tedious, delicate, and time consuming task. Thankfully, it is a common enough problem that someone already solved it! Scipy has a `signal` library that contains the `find_peaks` function. `find_peaks` takes a lot of different arguments that can greatly impact the quality of the peak finding. Chekcout our [configuration](../config/traces.md) description to see which parameters are exposed and what they do.
+Identifying peaks in spectra (traces) can be a tedious, delicate, and time consuming task. Thankfully, it is a common enough problem that someone already solved it. Scipy has a `signal` library that contains the `find_peaks` function. `find_peaks` takes a lot of different arguments that can greatly impact the quality of the peak finding. Chekcout our [configuration](../config/traces.md) description to see which parameters are exposed and what they do.
 
-Once peaks are identified, centroids, amplitudes, integrals are extracted.
+Once peaks are identified, centroids, amplitudes, integrals are extracted. Centroids are smeared within a single time bucket when converted to floating point values for subsequent calculations. This accounts for the binning behavior of sampling the electronic signal.
 
 This code is contained in `spyral/trace/get_trace.py` and `spyral/trace/get_event.py`.
 
 ## Consolidation into Point Clouds
 
-Once peaks have been identified, it is time to convert from signals into geometry. Each signal represents a measurement of the flight path of a particle through the AT-TPC (in principle anyways, there's a lot of noise). Coordinates in the AT-TPC pad plane (X-Y) are taken using the pad ID in which the signal occurred and looking up the pad position from a CSV file (again see the [config](../config/workspace.md) docs). The beam-axis coordinate (Z) is extracted by calibrating the centroid location of the peak, which originally is in units of GET time-buckets, to millimeters. This is done using two aboslute reference points: the window and the micromegas. The time bucket of the window and micromegas can be extracted by examining events with long trajectories such as events where the beam reacted with the window. The calibration is then
+Once peaks have been identified, it is time to convert from signals into geometry. Each signal represents a measurement of the electrons ionized by the flight path of a particle through the AT-TPC (in principle anyways, there's a lot of noise). Coordinates in the AT-TPC pad plane (X-Y) are taken using the pad ID in which the signal occurred and looking up the pad position from a CSV file (again see the [config](../config/workspace.md) docs). The beam-axis coordinate (Z) is extracted by calibrating the centroid location of the peak, which originally is in units of GET time-buckets, to millimeters. This is done using two aboslute reference points: the window and the micromegas. The time bucket of the window and micromegas can be extracted by examining events with long trajectories such as events where the beam reacted with the window. The calibration is then
 
 $$
     z_{signal} = \frac{t_{window} - t_{signal}}{t_{window} - t_{micromegas}} l_{attpc}
@@ -69,9 +69,29 @@ Additionally, it has been found that in some cases the AT-TPC needs a correction
 
 Point clouds are also sorted in z for ease of use later.
 
+### The Ion Chamber and the Trigger
+
+Some additional discussion needs to be had about the behavior of the ion chamber as it pertains to the trigger (start) of events. The ion chamber recieves a beam particle, which causes a singal to be registered. This ion chamber signal is then delayed by 100 &mu;s. The beam then enters the AT-TPC active volume, electrons are ionized, and the electrons drift toward the mesh. The mesh registers a singal, and this signal generates a 120 &mu;s gate. The coincidence of this mesh gate and the ion chamber delayed signal is then the trigger for an event. This effects the analysis of the ion chamber because the recording window for the module recieving the ion chamber recieves this delayed IC signal, and so can have peaks in the waveform that occured *before* the event trigger. To compensate for this there is a configuration parameter to set the delay in FRIBDAQ time buckets; all peaks before the delay time bucket are ignored and not used in subsequent ion chamber analysis. See [here](../config/traces.md) and the code in `spyral/traces/frib_event.py` for more details. (We should probably put a diagram of what is happening here)
+
 ## Legacy Data
 
 In the past, the AT-TPC was not run with a split DAQ. That is, all signals were recorded using the GET data aquisition, including auxilary detectors like the ion chamber. In the configuration, one can indicate to Spyral that legacy data is being analyzed (see [here](../config/run.md)). If this is turned on Spyral assumes that any data in CoBo 10 is exclusively from auxilary detectors. Legacy mappings and corrections are included in the `etc` directory. Legacy IC data is analyzed for peaks using the `FRIB` parameters even though the data is acquired using the GET DAQ (see [here](../config/traces.md)). Legacy analysis is an advanced feature, and requires some experience with using Spyral. This phase is the only phase significantly impacted by legacy analysis.
+
+## Scalers
+
+The FRIBDAQ data does not only contain auxilary detectors. It also contains scalers, or counters. These scalers are readout independently from the main acquisition and represent statistics of the experiment. The most common scaler to use is the downscaled ion chamber trigger, which is a measurement of the total beam count over the course of the experiment. Scalers are read out run by run and are written to the `scaler` directory of the workspace as dataframes in parquet files. The available columns in the dataframe are:
+
+- clock_free: The time ellapsed while running the data acqusition
+- clock_live: The amount of time for which the acquisition is "live" (able to accept triggers)
+- trigger_free: The total number of trigger signals recieved by the acquisition
+- trigger_live: The total number of triggers which acutally cause events in the acquisition
+- ic_sca: The total number of ion chamber signals recieved by the acquisition
+- mesh_sca: The total number of mesh signals recieved by the acquisition
+- si1_cfd: The total number of Si detector 1 signals recieved by the acquisition
+- si2_cfd: The total number of Si detector 2 signals recieved by the acquisition
+- sipm: Unclear
+- ic_ds: The downscaled rate into the ion chamber, typically a factor of 1000
+- ic_cfd: Unclear
 
 ## Final Thoughts
 

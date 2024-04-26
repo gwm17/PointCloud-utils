@@ -41,16 +41,16 @@
         "peak_prominence": 20.0,
         "peak_max_width": 500.0,
         "peak_threshold": 100.0,
+        "ic_delay_time_bucket": 1100,
         "event_ic_multiplicity": 1,
         "event_correct_ic_time": true
     },
     "Cluster": {
         "min_cloud_size": 50,
-        "smoothing_neighbor_distance(mm)": 15.0,
         "minimum_points": 5,
         "minimum_size_scale_factor": 0.05,
         "minimum_size_lower_cutoff": 10,
-        "cluster_selection_epsilon": 0.3,
+        "cluster_selection_epsilon": 10.0,
         "circle_overlap_ratio": 0.5,
         "fractional_charge_threshold": 0.75,
         "outlier_scale_factor": 0.05

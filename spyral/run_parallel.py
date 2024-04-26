@@ -20,6 +20,7 @@ from copy import deepcopy
 from tqdm import tqdm
 from pathlib import Path
 from time import time
+from numpy.random import SeedSequence
 
 
 def generate_shared_resources(config: Config):
@@ -126,6 +127,12 @@ def run_spyral_parallel(config: Config, no_progress: bool = False):
     spyral_info(__name__, f"Run stacks: {stacks}")
     print("Done.")
 
+    # Generate a seed for each process so that the
+    # random number generator in each process is unique
+    # See numpy docs for more details
+    sequence = SeedSequence()
+    seeds = sequence.spawn(len(stacks))
+
     # Create the child processes
     for s in range(0, len(stacks)):
         local_config = deepcopy(config)
@@ -133,11 +140,11 @@ def run_spyral_parallel(config: Config, no_progress: bool = False):
         processes.append(
             Process(
                 target=run_spyral,
-                args=(local_config, stacks[s], queues[-1], s),
+                args=(local_config, stacks[s], queues[-1], s, seeds[s]),
                 daemon=False,
             )
         )
-        pbars.append(tqdm(total=100, disable=no_progress))
+        pbars.append(tqdm(total=0, disable=no_progress, miniters=1, mininterval=0.001))
         stats.append(Phase.WAIT)
         runs.append(-1)
         pbars[-1].set_description(f"| Process {s} | { str(stats[-1]) } |")
@@ -149,9 +156,9 @@ def run_spyral_parallel(config: Config, no_progress: bool = False):
     # main loop
     while True:
         anyone_alive = False
-        # check processes still going
-        for process in processes:
-            if process.is_alive():
+        # check processes still going, or if queues have data to be read out
+        for idx, process in enumerate(processes):
+            if process.is_alive() or (not queues[idx].empty()):
                 anyone_alive = True
                 break
 
@@ -165,7 +172,7 @@ def run_spyral_parallel(config: Config, no_progress: bool = False):
 
             msg: StatusMessage = q.get()
             if msg.phase != stats[idx] or msg.run != runs[idx]:
-                pbars[idx].reset()
+                pbars[idx].reset(total=msg.total)
                 pbars[idx].set_description(f"| Process {idx} | {msg}")
                 stats[idx] = msg.phase
                 runs[idx] = msg.run
